@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments and IDEs
+.venv/
+venv/
+env/
+.idea/
+.vscode/
+
+# Test and runtime cache
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Training outputs and checkpoints
+output/
+outputs/
+logs/
+runs/
+wandb/
+*.pth
+*.pt
+*.ckpt
+*.onnx
+
+# Local data; keep documentation only
+data/*
+!data/README.md
+!data/.gitkeep
+
+# Predictions and OS files
+prediction_results/
+predictions/
+.DS_Store
+Thumbs.db
