@@ -47,7 +47,9 @@ class Trainer(object):
 
     def __init__(self, cfg, mode='train', task='rec'):
         self.cfg = cfg.cfg
-        self.task = task
+        if task != 'rec':
+            raise ValueError('The MSFE-RSVP repository only supports rec tasks.')
+        self.task = 'rec'
         self.report_iterative_ctc_metrics = bool(
             self.cfg['Global'].get('report_iterative_ctc_metrics', False))
         if self.report_iterative_ctc_metrics and task != 'rec':
@@ -101,7 +103,7 @@ class Trainer(object):
             self.writer = SummaryWriter(self.cfg['Global']['output_dir'])
 
         self.logger = get_logger(
-            'openrec' if task == 'rec' else 'opendet',
+            'openrec',
             os.path.join(self.cfg['Global']['output_dir'], 'train.log')
             if 'train' in mode else None,
         )
@@ -139,12 +141,7 @@ class Trainer(object):
                 self.logger.info(f'valid dataloader build failed: {e}')
                 self.valid_dataloader = None
 
-        if task == 'rec':
-            self._init_rec_model()
-        elif task == 'det':
-            self._init_det_model()
-        else:
-            raise NotImplementedError
+        self._init_rec_model()
 
         self.logger.info(get_parameter_number(model=self.model))
         self.model = self.model.to(self.device)
@@ -205,28 +202,10 @@ class Trainer(object):
             self.cfg['PostProcess'], self.cfg['Global'])
         # build model
         # for rec algorithm
-        self.use_transformers = self.cfg['Global'].get('use_transformers',
-                                                       False)
-        if self.use_transformers:
-            if self.cfg['Architecture']['algorithm'] == 'UniRec':
-                from openrec.modeling.unirec_modeling.modeling_unirec import UniRecForConditionalGenerationNew
-                from openrec.modeling.unirec_modeling.configuration_unirec import UniRecConfig
-                cfg_vlm = UniRecConfig.from_pretrained(
-                    self.cfg['Global']['vlm_ocr_config'])
-                cfg_vlm._attn_implementation = 'flash_attention_2'
-                # cfg_vlm._attn_implementation = "eager"
-                # cfg_vlm._attn_implementation = "sdpa"
-                self.model = UniRecForConditionalGenerationNew(config=cfg_vlm)
-            elif self.cfg['Architecture']['algorithm'] == 'CMER':
-                from openrec.modeling.cmer_modeling.modeling_cmer import CMER, CMERConfig
-                cfg_model = CMERConfig(
-                    self.cfg['Architecture']['vision_config'],
-                    self.cfg['Architecture']['decoder_config'])
-                self.model = CMER(config=cfg_model)
-        else:
-            char_num = self.post_process_class.get_character_num()
-            self.cfg['Architecture']['Decoder']['out_channels'] = char_num
-            self.model = build_rec_model(self.cfg['Architecture'])
+        char_num = self.post_process_class.get_character_num()
+        self.cfg['Architecture']['Decoder']['out_channels'] = char_num
+        self.model = build_rec_model(self.cfg['Architecture'])
+        self.use_transformers = False
         # build loss
         self.loss_class = build_rec_loss(self.cfg['Loss'])
         # build metric
@@ -406,22 +385,6 @@ class Trainer(object):
                 f'epoch={epoch}, warmup_epochs={warmup_epochs}, '
                 f'feature_detach={active}')
         return active
-
-    def _init_det_model(self):
-        from opendet.losses import build_loss as build_det_loss
-        from opendet.metrics import build_metric as build_det_metric
-        from opendet.modeling import build_model as build_det_model
-        from opendet.postprocess import build_post_process as build_det_post_process
-
-        # build post process
-        self.post_process_class = build_det_post_process(
-            self.cfg['PostProcess'], self.cfg['Global'])
-        # build detmodel
-        self.model = build_det_model(self.cfg['Architecture'])
-        # build loss
-        self.loss_class = build_det_loss(self.cfg['Loss'])
-        # build metric
-        self.eval_class = build_det_metric(self.cfg['Metric'])
 
     def load_params(self, params):
         self.model.load_state_dict(params)

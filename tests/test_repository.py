@@ -27,3 +27,9 @@ class RepositorySkeletonTest(unittest.TestCase):
         self.assertTrue((ROOT / "README.md").is_file())
         self.assertTrue((ROOT / "requirements.txt").is_file())
         self.assertTrue((ROOT / "project.md").is_file())
+
+    def test_only_final_runtime_directories_are_present(self):
+        for directory in ("opendet", "analysis_results", "prediction_results"):
+            self.assertFalse((ROOT / directory).exists())
+        configs = sorted((ROOT / "configs/rec").rglob("*.yml"))
+        self.assertEqual(configs, [ROOT / "configs/rec/uyghur/msfe_rsvp.yml"])

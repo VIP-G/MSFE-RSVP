@@ -1,4 +1,5 @@
 from copy import deepcopy
+import os
 from pathlib import Path
 import unittest
 
@@ -10,8 +11,12 @@ from openrec.postprocess import build_post_process
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKPOINT = Path("/ghData/output/msfe_rsvp/best.pth")
-DICTIONARY = Path("/ghData/data/uyghur_dict.txt")
+CHECKPOINT = Path(
+    os.environ.get("MSFE_RSVP_CHECKPOINT", "output/msfe_rsvp/best.pth")
+)
+DICTIONARY = Path(
+    os.environ.get("MSFE_RSVP_DICTIONARY", "data/uyghur_dict.txt")
+)
 
 
 @unittest.skipUnless(
