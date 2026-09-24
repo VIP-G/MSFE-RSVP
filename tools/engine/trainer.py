@@ -534,7 +534,7 @@ class Trainer(object):
         save_iter_step = save_iter_step[1]
 
         if self.cfg['Global'].get('resume_from_iter',
-                                  False):  # for unirec resume training
+                                  False):  # optional iteration resume
             if self.cfg['Global']['checkpoints'] is None:
                 raise ValueError(
                     'resume_from_iter is True, but checkpoints is None')
@@ -553,7 +553,7 @@ class Trainer(object):
             if set_loss_epoch is not None:
                 set_loss_epoch(epoch)
             if not self.cfg['Global'].get('resume_from_iter',
-                                          False):  # for unirec resume training
+                                          False):  # optional iteration resume
                 if 'sampler' in self.cfg['Train']:
                     self.cfg['Train']['sampler']['resume_iter'] = 0
             if hasattr(self.train_dataloader, 'dataset') and self.train_dataloader.dataset is not None:
@@ -572,7 +572,7 @@ class Trainer(object):
 
             for idx, batch in enumerate(self.train_dataloader):
                 if self.cfg['Global'].get('resume_from_iter',
-                                          False):  # for unirec resume training
+                                          False):  # optional iteration resume
                     if global_step != self.resume_iter:
                         global_step += 1
                         if is_main_process(

@@ -1,149 +1,82 @@
-import os
-import sys
+"""SimpleDataSet dataloader used by the MSFE-RSVP training loop."""
+
 import copy
 import importlib
 import random
+import sys
 
 import numpy as np
 import torch
-
-
-__dir__ = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(__dir__, '../..')))
-
 from torch.utils.data import DataLoader, DistributedSampler
 
-# 定义支持的 Dataset 类及其对应的模块路径
-DATASET_MODULES = {
-    'SimpleDataSet': 'tools.data.simple_dataset',
-}
 
-# 定义支持的 Sampler 类及其对应的模块路径
-SAMPLER_MODULES = {
-}
+DATASET_MODULES = {"SimpleDataSet": "tools.data.simple_dataset"}
 
-__all__ = [
-    'build_dataloader',
-]
 
 def seed_data_worker(worker_id: int) -> None:
-    """同步数据加载进程中的 Python 和 NumPy 随机种子。"""
+    """Synchronize Python and NumPy seeds in each data worker."""
+    del worker_id
     worker_seed = torch.initial_seed() % (2**32)
     random.seed(worker_seed)
     np.random.seed(worker_seed)
 
-def build_dataloader(config, mode, logger, seed=None, epoch=1, task='rec'):
+
+def build_dataloader(config, mode, logger, seed=None, epoch=1, task="rec"):
+    """Build the final SimpleDataSet DataLoader."""
+    if task != "rec":
+        raise ValueError("The MSFE-RSVP repository only supports rec tasks.")
+
     config = copy.deepcopy(config)
     mode = mode.capitalize()
-
-    # 获取 dataset 配置
-    dataset_config = config[mode]['dataset']
-    module_name = dataset_config['name']
+    dataset_config = config[mode]["dataset"]
+    module_name = dataset_config["name"]
+    if module_name not in DATASET_MODULES:
+        raise ValueError(
+            f"Unsupported dataset: {module_name}; only SimpleDataSet is "
+            "available"
+        )
 
     loader_randomness = {}
     sampling_seed = dataset_config.get("sampling_seed")
-
     if mode == "Train" and sampling_seed is not None:
-        # 同一 seed、同一 epoch 的三组使用相同抽样；
-        # 不同 epoch 仍重新抽取 synthetic 子集。
-        seed = int(sampling_seed) + int(epoch) - 1
-
         generator = torch.Generator()
-        generator.manual_seed(seed)
+        generator.manual_seed(int(sampling_seed) + int(epoch) - 1)
         loader_randomness = {
             "generator": generator,
             "worker_init_fn": seed_data_worker,
         }
 
-    # 动态导入 dataset 类
-    if module_name not in DATASET_MODULES:
-        raise ValueError(
-            f'Unsupported dataset: {module_name}. Supported datasets: {list(DATASET_MODULES.keys())}'
-        )
-
     dataset_module = importlib.import_module(DATASET_MODULES[module_name])
     dataset_class = getattr(dataset_module, module_name)
     dataset = dataset_class(config, mode, logger, seed, epoch=epoch, task=task)
 
-    # DataLoader 配置
-    loader_config = config[mode]['loader']
-    num_workers = loader_config['num_workers']
-    pin_memory = loader_config.get('pin_memory', False)
-    if module_name == 'CMERWebDataSet':
-        logger.info(f"Building WebLoader for {module_name} (IterableDataset mode)...")
-        import webdataset as wds
-        persistent = num_workers > 0
-        data_loader = wds.WebLoader(
-            dataset,
-            batch_size=None,  # 必须为 None，因为 dataset yield 的已经是 batch
-            shuffle=False,    # 外部不打乱，内部处理
-            num_workers=num_workers,
-            pin_memory=True,
-            prefetch_factor=4,
-            persistent_workers=persistent,
+    loader_config = config[mode]["loader"]
+    sampler = None
+    if config["Global"].get("distributed") and mode == "Train":
+        sampler = DistributedSampler(
+            dataset=dataset, shuffle=loader_config["shuffle"]
         )
-        total_iter_steps = config['Global'].get('total_iter_steps', 1000000) 
-        data_loader = data_loader.with_length(total_iter_steps)
-        return data_loader
-    else:
-        batch_size = loader_config['batch_size_per_card']
-        drop_last = loader_config['drop_last']
-        shuffle = loader_config['shuffle']
-        sampler = None
-        batch_sampler = None
-        if 'sampler' in config[mode]:
-            sampler_config = config[mode]['sampler']
-            sampler_name = sampler_config.pop('name')
 
-            if sampler_name not in SAMPLER_MODULES:
-                raise ValueError(
-                    f'Unsupported sampler: {sampler_name}. Supported samplers: {list(SAMPLER_MODULES.keys())}'
-                )
+    collate_fn = None
+    if hasattr(dataset, "collate_fn"):
+        collate_fn = dataset.collate_fn
+    elif "collate_fn" in loader_config:
+        raise ValueError("custom collate_fn is not supported in this repository")
 
-            sampler_module = importlib.import_module(SAMPLER_MODULES[sampler_name])
-            sampler_class = getattr(sampler_module, sampler_name)
-            batch_sampler = sampler_class(dataset, **sampler_config)
-        elif config['Global']['distributed'] and mode == 'Train':
-            sampler = DistributedSampler(dataset=dataset, shuffle=shuffle)
-
-        if hasattr(dataset, 'collate_fn'):
-            collate_fn = dataset.collate_fn
-            logger.info(f'Using collate_fn defined in {mode} dataset.')
-        else:
-            if 'collate_fn' in loader_config:
-                from . import collate_fn
-                collate_fn = getattr(collate_fn, loader_config['collate_fn'])()
-            else:
-                collate_fn = None
-
-        if batch_sampler is None:
-            data_loader = DataLoader(
-                dataset=dataset,
-                sampler=sampler,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
-                collate_fn=collate_fn,
-                batch_size=batch_size,
-                drop_last=drop_last,
-                **loader_randomness,
-            )
-        else:
-            data_loader = DataLoader(
-                dataset=dataset,
-                batch_sampler=batch_sampler,
-                num_workers=num_workers,
-                pin_memory=pin_memory,
-                collate_fn=collate_fn,
-                **loader_randomness,
-            )
-
-        # 检查数据加载器是否为空
-        if len(data_loader) == 0:
-            logger.error(
-                f'No Images in {mode.lower()} dataloader. Please check:\n'
-                '\t1. The images num in the train label_file_list should be >= batch size.\n'
-                '\t2. The annotation file and path in the configuration are correct.\n'
-                '\t3. The BatchSize is not larger than the number of images.')
-            sys.exit()
-
-        return data_loader
+    data_loader = DataLoader(
+        dataset=dataset,
+        sampler=sampler,
+        num_workers=loader_config["num_workers"],
+        pin_memory=loader_config.get("pin_memory", False),
+        collate_fn=collate_fn,
+        batch_size=loader_config["batch_size_per_card"],
+        drop_last=loader_config["drop_last"],
+        shuffle=loader_config["shuffle"] if sampler is None else False,
+        **loader_randomness,
+    )
+    if len(data_loader) == 0:
+        logger.error(
+            "No images in the dataloader. Check label files and batch size."
+        )
+        sys.exit()
+    return data_loader
