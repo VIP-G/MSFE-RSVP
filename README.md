@@ -53,7 +53,10 @@ data/real_eval.txt
 python tools/train_rec.py -c configs/rec/uyghur/msfe_rsvp.yml
 python tools/eval_rec.py -c configs/rec/uyghur/msfe_rsvp.yml \
   -o Global.checkpoints=./output/msfe_rsvp/best.pth
-python tools/infer_rec.py --help
+python tools/infer_rec.py \
+  -c configs/rec/uyghur/msfe_rsvp.yml \
+  --checkpoint ./output/msfe_rsvp/best.pth \
+  --image ./data/images/example.jpg
 ```
 
 如需使用其他数据目录，按照当前入口的 `-o` 语法覆盖配置：
